@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POST to /orders</title>
+</head>
+<body>
+<h1>Send POST Request to /orders</h1>
+<form id="postForm">
+    <label for="data">Enter JSON Data:</label><br>
+    <textarea id="data" name="data" rows="20" cols="80">{
+    "Time": "2023-12-20T10:00:00",
+    "TotalAmount": 250.75,
+    "CustomerID": "C123",
+    "Status": "Shipped",
+    "ShipperID": 2,
+    "OrderItems": [
+        {
+            "OrderItemID": 1,
+            "OrderID": 101,
+            "ProductID": 201,
+            "Quantity": 2,
+            "Price": 50.25
+        },
+        {
+            "OrderItemID": 2,
+            "OrderID": 101,
+            "ProductID": 202,
+            "Quantity": 1,
+            "Price": 150.25
+        }
+    ]
+}</textarea><br><br>
+    <button type="button" onclick="sendPost()">Send POST</button>
+</form>
+
+<p id="response"></p>
+
+<script>
+    function sendPost() {
+        const url = "http://localhost:8017/orders"; // URL endpoint
+        const data = document.getElementById("data").value; // Lấy dữ liệu JSON từ textarea
+
+        // Gửi yêu cầu POST
+        fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: data
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("HTTP error " + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            document.getElementById("response").innerText = JSON.stringify(data, null, 4); // Hiển thị phản hồi
+        })
+        .catch(error => {
+            document.getElementById("response").innerText = "Error: " + error.message; // Hiển thị lỗi
+        });
+    }
+</script>
+</body>
+</html>
