@@ -1,24 +1,26 @@
 package Server;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-import com.google.gson.Gson;
-import org.bson.Document;
-import com.sun.net.httpserver.HttpHandler;
+import com.mongodb.client.model.Filters;
 import com.sun.net.httpserver.HttpExchange;
-import com.google.gson.reflect.TypeToken;
+import com.sun.net.httpserver.HttpHandler;
+import org.bson.Document;
 
-
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
-import com.mongodb.client.model.Filters;
 
 public class MongoOrderHandler implements HttpHandler {
 
-    private MongoDBConnection mongoDBConnection;
+    private final MongoDBConnection mongoDBConnection;
 
     // Constructor
     public MongoOrderHandler() {
@@ -48,32 +50,47 @@ public class MongoOrderHandler implements HttpHandler {
     }
 
     private void handleGet(HttpExchange exchange) throws IOException {
-        String jsonResponse = getAllOrders();
+        String path = exchange.getRequestURI().getPath();
+        String jsonResponse;
+        int statusCode = 200; // Default to OK
+
+        if (path.equals("/orders/shipperID/0")) {
+            jsonResponse = findOrdersWithShipperIDZero();
+        } else if (path.equals("/orders/status/debt")) {
+            jsonResponse = findOrdersWithStatusDebt();
+        } else if (path.matches("/orders/\\d+")) { // Pattern to match /orders/{orderID}
+            String orderIDStr = path.substring(path.lastIndexOf("/") + 1);
+            try {
+                int orderID = Integer.parseInt(orderIDStr);
+                jsonResponse = findOrderByID(orderID);
+            } catch (NumberFormatException e) {
+                jsonResponse = "{\"message\": \"Invalid order ID format.\"}";
+                statusCode = 400; // Bad Request
+            }
+        } else {
+            jsonResponse = getAllOrders(); // Default: return all orders
+        }
+
         exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, jsonResponse.getBytes().length);
+        exchange.sendResponseHeaders(statusCode, jsonResponse.getBytes().length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(jsonResponse.getBytes());
         }
     }
 
-    private List<Document> parseOrderItems(String orderItemsData) {
+
+    private List<Document> parseOrderItems(List<Map<String, Object>> orderItemsData) {
         List<Document> orderItems = new ArrayList<>();
-        int orderItemID = 1; // Start with 1 and increment for each order item
 
         if (orderItemsData != null && !orderItemsData.isEmpty()) {
-            // Assume JSON array format: [ { "ProductID": ..., "Quantity": ..., "Price": ... }, { ... } ]
-            List<Map<String, Object>> items = new Gson().fromJson(orderItemsData, new TypeToken<List<Map<String, Object>>>() {}.getType());
-
-            for (Map<String, Object> itemData : items) {
+            for (Map<String, Object> itemData : orderItemsData) {
                 Document orderItem = new Document();
-                orderItem.append("OrderItemID", orderItemID++); // Auto-increment OrderItemID
-                orderItem.append("ProductID", ((Double) itemData.get("ProductID")).intValue());
-                orderItem.append("Quantity", ((Double) itemData.get("Quantity")).intValue());
-                orderItem.append("Price", ((Double) itemData.get("Price")).doubleValue());
+                orderItem.append("productID", ((Double) itemData.get("productID")).intValue());
+                orderItem.append("quantity", ((Double) itemData.get("quantity")).intValue());
+                orderItem.append("price", ((Double) itemData.get("price")).doubleValue());
                 orderItems.add(orderItem);
             }
         }
-
         return orderItems;
     }
 
@@ -93,25 +110,28 @@ public class MongoOrderHandler implements HttpHandler {
         try {
             String jsonData = requestBody.toString();
 
-            // Lấy giá trị từ JSON
-            String time = getValueFromJson(jsonData, "time");
-            double totalAmount = Double.parseDouble(getValueFromJson(jsonData, "totalAmount"));
-            int customerID = Integer.parseInt(getValueFromJson(jsonData, "customerID"));
-            String status = getValueFromJson(jsonData, "status");
-            int shipperID = Integer.parseInt(getValueFromJson(jsonData, "shipperID"));
+            // Parse the entire JSON into a Map
+            Map<String, Object> jsonObject = new Gson().fromJson(jsonData, new TypeToken<Map<String, Object>>() {
+            }.getType());
+
+            // Extract values from the Map
+            String time = (String) jsonObject.get("time");
+            double totalAmount = ((Double) jsonObject.get("totalAmount"));
+            int customerID = ((Double) jsonObject.get("customerID")).intValue();
+            String status = (String) jsonObject.get("status");
+            int shipperID = ((Double) jsonObject.get("shipperID")).intValue();
 
             // Auto-generate the orderID
-            int orderID = generateOrderID(); // New method for generating orderID
+            int orderID = generateOrderID();
 
-            // Lấy dữ liệu OrderItems và phân tích
-            String orderItemsData = getValueFromJson(jsonData, "orderItems");
-            List<Document> orderItems = parseOrderItems(orderItemsData);
+            // Extract and parse "orderItems"
+            List<Map<String, Object>> orderItemsList = (List<Map<String, Object>>) jsonObject.get("orderItems");
+            List<Document> orderItems = parseOrderItems(orderItemsList);
 
-            // Kiểm tra Time và OrderItems
+            // Validate and save order
             if (time != null && !orderItems.isEmpty()) {
-                // Lưu đơn hàng nếu tất cả các trường hợp hợp lệ
                 if (saveOrder(orderID, time, totalAmount, customerID, status, shipperID, orderItems)) {
-                    responseMessage = String.format("{\"message\": \"Order added successfully!\", \"OrderID\": %d}", orderID);
+                    responseMessage = "{\"message\": \"Order added successfully!\", \"orderID\": " + orderID + "}";
                     statusCode = 201;
                 } else {
                     responseMessage = "{\"message\": \"Failed to add order.\"}";
@@ -128,6 +148,7 @@ public class MongoOrderHandler implements HttpHandler {
 
         sendResponse(exchange, responseMessage, statusCode);
     }
+
 
     // Method to generate a unique OrderID
     private int generateOrderID() {
@@ -146,44 +167,44 @@ public class MongoOrderHandler implements HttpHandler {
         }
 
         String jsonData = requestBody.toString();
-
-        // Phân tích chuỗi JSON thủ công để chuyển thành Map
-        Map<String, Object> dataMap = parseJsonToMap(jsonData);
-
-        String orderID = (String) dataMap.get("OrderID");
-        String time = (String) dataMap.get("Time");
-        Double totalAmount = (Double) dataMap.get("TotalAmount");
-        String status = (String) dataMap.get("Status");
-        Integer shipperID = (Integer) dataMap.get("ShipperID");
-
-        // Phản hồi nếu thiếu thông tin cần thiết
+        String path = exchange.getRequestURI().getPath();
         String responseMessage;
         int statusCode;
-        if (orderID == null || orderID.isEmpty()) {
-            responseMessage = "{\"message\": \"OrderID is required\"}";
-            statusCode = 400;
-            sendResponse(exchange, responseMessage, statusCode);
-            return;
-        }
 
-        if (totalAmount == null || shipperID == null) {
-            responseMessage = "{\"message\": \"Invalid number format or missing required fields\"}";
-            statusCode = 400;
-            sendResponse(exchange, responseMessage, statusCode);
-            return;
-        }
+        try {
+            int orderID = Integer.parseInt(getValueFromJson(jsonData, "OrderID"));
 
-        // Cập nhật thông tin đơn hàng
-        if (updateOrder(orderID, time, totalAmount, status, shipperID)) {
-            responseMessage = "{\"message\": \"Order updated successfully!\"}";
-            statusCode = 200;
-        } else {
-            responseMessage = "{\"message\": \"Failed to update order.\"}";
+            if (path.contains("/updateShipperID")) {
+                // Update ShipperID
+                int shipperID = Integer.parseInt(getValueFromJson(jsonData, "ShipperID"));
+                if (updateShipperID(orderID, shipperID)) {
+                    responseMessage = "{\"message\": \"ShipperID updated successfully!\"}";
+                    statusCode = 200;
+                } else {
+                    responseMessage = "{\"message\": \"Failed to update ShipperID.\"}";
+                    statusCode = 500;
+                }
+            } else if (path.contains("/updateStatus")) {
+                // Update Status to "paid"
+                if (updateOrderStatusToPaid(orderID)) {
+                    responseMessage = "{\"message\": \"Order status updated to 'paid' successfully!\"}";
+                    statusCode = 200;
+                } else {
+                    responseMessage = "{\"message\": \"Failed to update order status.\"}";
+                    statusCode = 500;
+                }
+            } else {
+                responseMessage = "{\"message\": \"Invalid endpoint.\"}";
+                statusCode = 400;
+            }
+        } catch (Exception e) {
+            responseMessage = "{\"message\": \"Internal server error: " + e.getMessage() + "\"}";
             statusCode = 500;
         }
 
         sendResponse(exchange, responseMessage, statusCode);
     }
+
 
     private boolean updateOrder(String orderID, String time, double totalAmount, String status, int shipperID) {
         MongoDatabase database = mongoDBConnection.getDatabase();
@@ -231,6 +252,7 @@ public class MongoOrderHandler implements HttpHandler {
         }
         return map;
     }
+
     private boolean deleteOrder(String orderID) {
         MongoDatabase database = mongoDBConnection.getDatabase();
         MongoCollection<Document> orderCollection = database.getCollection("Order");
@@ -279,6 +301,29 @@ public class MongoOrderHandler implements HttpHandler {
         sendResponse(exchange, responseMessage, statusCode);
     }
 
+    private String findOrderByID(int orderID) {
+        // Example: In-memory order data (replace with actual data source)
+        Map<Integer, Map<String, Object>> orders = new HashMap<>();
+        Map<String, Object> order = new HashMap<>();
+        order.put("orderID", 12345);
+        order.put("customerID", 67890);
+        order.put("shipperID", 11223);
+        order.put("status", "paid");
+        order.put("time", "2024-12-16 17:40:43");
+        order.put("totalAmount", 150.75);
+        orders.put(12345, order);
+
+        // Retrieve the order by orderID
+        Map<String, Object> foundOrder = orders.get(orderID);
+        if (foundOrder != null) {
+            // Convert the order map to a JSON string
+            Gson gson = new Gson();
+            return gson.toJson(foundOrder);
+        } else {
+            return "{\"message\": \"Order not found.\"}";
+        }
+    }
+
     private String getAllOrders() {
         MongoDatabase database = mongoDBConnection.getDatabase();
         MongoCollection<Document> orderCollection = database.getCollection("Order");
@@ -322,6 +367,49 @@ public class MongoOrderHandler implements HttpHandler {
         }
     }
 
+    // Find orders where ShipperID = 0
+    private String findOrdersWithShipperIDZero() {
+        MongoDatabase database = mongoDBConnection.getDatabase();
+        MongoCollection<Document> orderCollection = database.getCollection("Order");
+
+        // Query to find orders where ShipperID = 0
+        List<Document> orders = orderCollection.find(Filters.eq("ShipperID", 0)).into(new ArrayList<>());
+
+        StringBuilder jsonBuilder = new StringBuilder("[");
+        for (Document order : orders) {
+            jsonBuilder.append(order.toJson()).append(",");
+        }
+
+        if (jsonBuilder.length() > 1) {
+            jsonBuilder.deleteCharAt(jsonBuilder.length() - 1); // Remove trailing comma
+        }
+
+        jsonBuilder.append("]");
+        return jsonBuilder.toString();
+    }
+
+    // Find orders where Status = "debt"
+    private String findOrdersWithStatusDebt() {
+        MongoDatabase database = mongoDBConnection.getDatabase();
+        MongoCollection<Document> orderCollection = database.getCollection("Order");
+
+        // Query to find orders where Status = "debt"
+        List<Document> orders = orderCollection.find(Filters.eq("Status", "debt")).into(new ArrayList<>());
+
+        StringBuilder jsonBuilder = new StringBuilder("[");
+        for (Document order : orders) {
+            jsonBuilder.append(order.toJson()).append(",");
+        }
+
+        if (jsonBuilder.length() > 1) {
+            jsonBuilder.deleteCharAt(jsonBuilder.length() - 1); // Remove trailing comma
+        }
+
+        jsonBuilder.append("]");
+        return jsonBuilder.toString();
+    }
+
+
     private boolean saveOrder(int orderID, String time, double totalAmount, int customerID, String status, int shipperID, List<Document> orderItems) {
         MongoDatabase database = mongoDBConnection.getDatabase();
         MongoCollection<Document> orderCollection = database.getCollection("Order");
@@ -333,12 +421,37 @@ public class MongoOrderHandler implements HttpHandler {
                 .append("CustomerID", customerID)
                 .append("Status", status)
                 .append("ShipperID", shipperID)
-                .append("OrderItems", orderItems); // Include parsed order items with auto-generated OrderItemID
+                .append("OrderItems", orderItems);
 
         orderCollection.insertOne(newOrder);
         return true;
     }
 
+    private boolean updateShipperID(int orderID, int shipperID) {
+        MongoDatabase database = mongoDBConnection.getDatabase();
+        MongoCollection<Document> orderCollection = database.getCollection("Order");
+
+        // Find the order with the given orderID and update its ShipperID
+        Document result = orderCollection.findOneAndUpdate(
+                Filters.eq("OrderID", orderID),
+                new Document("$set", new Document("ShipperID", shipperID))
+        );
+
+        return result != null; // If a document was found and updated, return true
+    }
+
+    private boolean updateOrderStatusToPaid(int orderID) {
+        MongoDatabase database = mongoDBConnection.getDatabase();
+        MongoCollection<Document> orderCollection = database.getCollection("Order");
+
+        // Find the order with the given orderID and update its Status to "paid"
+        Document result = orderCollection.findOneAndUpdate(
+                Filters.eq("OrderID", orderID),
+                new Document("$set", new Document("Status", "paid"))
+        );
+
+        return result != null; // If a document was found and updated, return true
+    }
 
 
 }

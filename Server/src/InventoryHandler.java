@@ -15,7 +15,7 @@ import java.sql.SQLException;
 public class InventoryHandler implements HttpHandler {
 
     private final Gson gson = new Gson();
-    private final SQLConnection sqlConnection = new SQLConnection();
+    private final Server.SQLConnection sqlConnection = new Server.SQLConnection();
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {

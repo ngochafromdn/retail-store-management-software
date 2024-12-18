@@ -26,6 +26,9 @@ public class ProductHandler implements HttpHandler {
             case "POST":
                 handlePost(exchange);
                 break;
+            case "PUT":
+                handlePut(exchange);
+                break;
             default:
                 exchange.sendResponseHeaders(405, -1); // 405 Method Not Allowed
         }
@@ -69,6 +72,59 @@ public class ProductHandler implements HttpHandler {
         }
     }
 
+    private void handlePut(HttpExchange exchange) throws IOException {
+        StringBuilder requestBody = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(exchange.getRequestBody()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                requestBody.append(line);
+            }
+        }
+
+        String responseMessage;
+        int statusCode;
+        SQLConnection sqlConnection = new SQLConnection();
+
+        try (Connection conn = sqlConnection.getConnection()) {
+            String jsonData = requestBody.toString();
+
+            // Extract product_id and deltaQuantity from JSON
+            int productId = extractIntFromJson(jsonData, "product_id");
+            int deltaQuantity = extractIntFromJson(jsonData, "deltaQuantity");
+
+            if (productId == -1 || deltaQuantity == -1) {
+                responseMessage = "{\"message\": \"Invalid input data.\"}";
+                statusCode = 400;
+            } else {
+                // Update the quantity in the database
+                String query = "UPDATE Product SET Quantity = Quantity + ? WHERE product_id = ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                    pstmt.setInt(1, deltaQuantity);
+                    pstmt.setInt(2, productId);
+
+                    int rowsUpdated = pstmt.executeUpdate();
+                    if (rowsUpdated > 0) {
+                        responseMessage = "{\"message\": \"Product quantity updated successfully!\"}";
+                        statusCode = 200;
+                    } else {
+                        responseMessage = "{\"message\": \"Product not found.\"}";
+                        statusCode = 404;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            responseMessage = "{\"message\": \"Database error: " + e.getMessage() + "\"}";
+            statusCode = 500;
+        }
+
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(statusCode, responseMessage.getBytes().length);
+
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(responseMessage.getBytes());
+        }
+    }
+
     private String getProductsAsJSON() {
         StringBuilder jsonBuilder = new StringBuilder("[");
         SQLConnection sqlConnection = new SQLConnection();
@@ -100,13 +156,11 @@ public class ProductHandler implements HttpHandler {
     private boolean saveProductToDatabase(String jsonData) {
         SQLConnection sqlConnection = new SQLConnection();
 
-        // Ensure the JSON data is not null or empty
         if (jsonData == null || jsonData.isEmpty()) {
             System.err.println("Received empty JSON data.");
             return false;
         }
 
-        // Extract product fields from JSON (name, price, quantity)
         String name = extractFieldFromJson(jsonData, "name");
         double price = extractDoubleFromJson(jsonData, "price");
         int quantity = extractIntFromJson(jsonData, "quantity");
@@ -120,14 +174,12 @@ public class ProductHandler implements HttpHandler {
             String query = "INSERT INTO Product (Name, UnitPrice, Quantity) VALUES (?, ?, ?)";
 
             try (PreparedStatement pstmt = conn.prepareStatement(query)) {
-                // Set the parameters for the query
                 pstmt.setString(1, name);
                 pstmt.setDouble(2, price);
                 pstmt.setInt(3, quantity);
 
-                // Execute the update
                 int rowsAffected = pstmt.executeUpdate();
-                return rowsAffected > 0; // Return true if product was added successfully
+                return rowsAffected > 0;
             }
         } catch (SQLException e) {
             System.err.println("SQL error: " + e.getMessage());
@@ -140,13 +192,12 @@ public class ProductHandler implements HttpHandler {
         return false;
     }
 
-    // Helper method to extract a string field from the JSON
     private String extractFieldFromJson(String jsonData, String field) {
         try {
-            int start = jsonData.indexOf("\"" + field + "\":\"") + field.length() + 3; // Find the start of the field
-            int end = jsonData.indexOf("\"", start); // Find the end of the field
+            int start = jsonData.indexOf("\"" + field + "\":\"") + field.length() + 3;
+            int end = jsonData.indexOf("\"", start);
             if (start != -1 && end != -1) {
-                return jsonData.substring(start, end); // Return the field value
+                return jsonData.substring(start, end);
             }
         } catch (Exception e) {
             System.err.println("Error extracting field '" + field + "' from JSON: " + e.getMessage());
@@ -155,38 +206,34 @@ public class ProductHandler implements HttpHandler {
         return null;
     }
 
-    // Helper method to extract a double field from the JSON
     private double extractDoubleFromJson(String jsonData, String field) {
         try {
-            int start = jsonData.indexOf("\"" + field + "\":") + field.length() + 3; // Find the start of the field
-            int end = jsonData.indexOf(",", start); // Find the comma after the value
-            if (end == -1) end = jsonData.indexOf("}", start); // Handle last field case
+            int start = jsonData.indexOf("\"" + field + "\":") + field.length() + 3;
+            int end = jsonData.indexOf(",", start);
+            if (end == -1) end = jsonData.indexOf("}", start);
 
             if (start != -1 && end != -1) {
-                return Double.parseDouble(jsonData.substring(start, end).trim()); // Return the field value as double
+                return Double.parseDouble(jsonData.substring(start, end).trim());
             }
         } catch (Exception e) {
             System.err.println("Error extracting field '" + field + "' from JSON: " + e.getMessage());
-            e.printStackTrace();
         }
-        return -1; // Return -1 if the value is not found or is invalid
+        return -1;
     }
 
-    // Helper method to extract an integer field from the JSON
     private int extractIntFromJson(String jsonData, String field) {
         try {
-            int start = jsonData.indexOf("\"" + field + "\":") + field.length() + 3; // Find the start of the field
-            int end = jsonData.indexOf(",", start); // Find the comma after the value
-            if (end == -1) end = jsonData.indexOf("}", start); // Handle last field case
+            int start = jsonData.indexOf("\"" + field + "\":") + field.length() + 3;
+            int end = jsonData.indexOf(",", start);
+            if (end == -1) end = jsonData.indexOf("}", start);
 
             if (start != -1 && end != -1) {
-                return Integer.parseInt(jsonData.substring(start, end).trim()); // Return the field value as int
+                return Integer.parseInt(jsonData.substring(start, end).trim());
             }
         } catch (Exception e) {
             System.err.println("Error extracting field '" + field + "' from JSON: " + e.getMessage());
-            e.printStackTrace();
         }
-        return -1; // Return -1 if the value is not found or is invalid
+        return -1;
     }
-
 }
+
