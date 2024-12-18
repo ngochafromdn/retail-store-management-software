@@ -4,6 +4,7 @@
 
 This software redesigns the retail store management system from Project 1, applying three architectural patterns: 3-layer, MVC, and client/server. The system includes web services and desktop-based clients for customers, cashiers, and managers, integrated with both MySQL and MongoDB databases.
 
+DEMO : https://youtu.be/eF06m-DfDj0
 ## Structure
 
 ### Client
@@ -60,4 +61,8 @@ This software redesigns the retail store management system from Project 1, apply
 - **Player-Role**: Applied to users with different roles (Customer, Cashier, Manager).
 - **Singleton**: Ensures a single instance of shared resources.
 - **Observer**: Used for updating the manager’s dashboard in real time when an order or inventory is updated.
+
+
+
+  
 
